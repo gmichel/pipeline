@@ -30,6 +30,12 @@
                 .done(function() {console.log('Successful update status:', _id, title, url);});
                 $(`.paperlink[data-id="${_id}"]`).attr('href', url).text(title);
             });
+             $('#nextgroup').click(function() {
+                 $(location).attr('href',
+                    `{{pipelinebase}}/review/triage?button=next3`
+                ).fail(() => {document.write('redirect failed; reload?')})
+              //  location.reload();
+            });
               $('.solicit').click(function() {
                 let item = $(this);
                 let _id = item.attr('data-id');
@@ -102,6 +108,14 @@
             <h1>Review{% if status %}: {{status}}{% endif %}</h1>
             <p>{{guidelines|safe}}</p>
             <div id="reviewpane">
+            <h6>Showing {{num_rev_papers}} selected papers.</h6>
+
+            <div style="position: relative; bottom: 10px;">
+                <div style="position: absolute; right: 0; top: 0;  text-align: right">
+                    <button type="button" class="btn btn-default" id="nextgroup">Get Next {{num_rev_papers}} Papers</button>
+                </div>
+            </div>
+
                 <h2>To review:</h2>
                 {% for item in items %}
                     <div class="col-sm-12" style="border: 1px solid black; padding: 1em; background-color: white; margin-bottom: 1em" id="box{{item.id}}">

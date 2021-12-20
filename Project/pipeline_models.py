@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime, timedelta
 import json
 
 from bson.objectid import ObjectId
@@ -13,7 +13,6 @@ db.authenticate(
 )
 
 collection = getattr(db, settings.app_settings["collection_name"])
-
 
 fieldnames = set()
 for item in collection.find():
@@ -61,10 +60,12 @@ def get_papers(fieldname, fieldvalue):
         fieldvalue = '{ "$eq": NaN }'
         inp = "{\"" + fieldname + "\" : " + fieldvalue + "}"
     else:
-        inp =  "{\"" + fieldname + "\" : \"" + fieldvalue + "\"}"
+        inp = "{\"" + fieldname + "\" : \"" + fieldvalue + "\"}"
     patt = json.loads(inp)
     return list(collection.find(patt))
-#return list(collection.find({fieldname: fieldvalue}))
+
+
+# return list(collection.find({fieldname: fieldvalue}))
 def paper_by_id(paper_id):
     return collection.find_one({"_id": ObjectId(paper_id)})
 
@@ -73,15 +74,80 @@ def papers_by_status(status):
     return collection.find({"status": status})
 
 
+def papers_by_lock_status(status, nextbutton, username, num_rev_papers,rev_papers_timeout):
+    now_less = datetime.now() - timedelta(minutes=rev_papers_timeout)
+    current_lock = {"lock_status_time": {"$gte": now_less.isoformat()},
+                    "lock_status": username}
+    no_lock = {"$and": [{"$or": [{"lock_status_time":
+                                      {"$lt": now_less.isoformat()}}
+        , {"lock_status_time": {"$exists": False}}]}
+                        ]
+               }
+    if nextbutton == 'next3':
+        collection.update_many({"lock_status": username},
+                               {"$set": {"lock_status": ""}})
+        init_papers = list(collection.find(no_lock).limit(num_rev_papers))
+        return lock_papers(init_papers, username)
+    else:
+        no_lock = {"lock_status_time": {"$lt": now_less.isoformat()}}
+    list_current_lock = \
+        list(collection.find(current_lock).limit(num_rev_papers))
+    if len(list_current_lock) == 0:
+        list_current_lock = list(collection.find(no_lock).limit(num_rev_papers))
+    return lock_papers(list_current_lock, username)
+
+
+def lock_papers(papers, username, rev_papers_timeout):
+    res = {}
+    for doc in papers:
+        res[doc["_id"]] = doc.get("_id", "")
+    ids = list(res.keys())
+    now_less = datetime.now() - timedelta(minutes=rev_papers_timeout)
+    collection.update_many({"_id": {"$in": ids}}, {
+        "$set": {"lock_status_time": datetime.now().isoformat(),
+                 "lock_status": username}})
+    return papers
+
+
+def locked_paper_check(paper_id, rev_papers_timeout):
+    paper = collection.find_one({"_id": ObjectId(paper_id)})
+    now_less = datetime.now() - timedelta(minutes=rev_papers_timeout)
+    current_lock = {"lock_status_time": {"$gte": now_less.isoformat()},
+                    "_id": ObjectId(paper_id)}
+    lock_check = list(collection.find(current_lock))
+    if len(lock_check) == 0:
+        return False
+    return True
+
+
 def update(paper_id, username, **kwargs):
-    new_values = {item: value for item, value in kwargs.items() if value is not None}
-    if new_values:
-        collection.update_many({"_id": ObjectId(paper_id)}, {"$set": new_values})
-        now = datetime.datetime.now().isoformat()
-        collection.update_many(
-            {"_id": ObjectId(paper_id)},
-            {"$push": {"log": {"username": username, "time": now, "data": new_values}}},
-        )
+    locked_paper = locked_paper_check(paper_id)
+    if locked_paper:
+        new_values = {item: value for item, value in kwargs.items() if
+                      value is not None}
+        if new_values:
+            now = datetime.now().isoformat()
+            current_paper = collection.find_one({"_id": ObjectId(paper_id)})
+            lst = current_paper["lock_status_time"]
+            lockquery = {"lock_status_time": lst, "lock_status": username}
+            locked_ids = collection.find(lockquery)
+            for lock_time in locked_ids:
+                pp_id = lock_time["_id"]
+                collection.update_many({"_id": ObjectId(pp_id)},
+                                       {
+                                           "$set": {"lock_status_time": now,
+                                                    "lock_status": username}
+                                       }
+                                       )
+            new_values["lock_status_time"] = now
+            collection.update_many({"_id": ObjectId(paper_id)},
+                                   {"$set": new_values})
+            collection.update_many(
+                {"_id": ObjectId(paper_id)},
+                {"$push": {"log": {"username": username, "time": now,
+                                   "data": new_values}}},
+            )
+
 
 def update_userdata(paper_id, userdata, new_status="user-submitted"):
     if paper_id != "new":
@@ -103,7 +169,7 @@ def update_userdata(paper_id, userdata, new_status="user-submitted"):
         )
     else:
         collection.find_one_and_update(
-            {"_id": ObjectId(paper_id)},
+            {"_id": (paper_id)},
             {"$currentDate": {"init_date": True}},
             upsert=True,
         )
@@ -114,7 +180,7 @@ def update_userdata(paper_id, userdata, new_status="user-submitted"):
                 json.dumps(
                     {
                         "paperid": paper_id,
-                        "time": datetime.datetime.now().isoformat(),
+                        "time": datetime.now().isoformat(),
                         "userdata": userdata,
                     }
                 )
@@ -129,10 +195,12 @@ def get_userdata(paper_id, private_user):
             result["global_fields"].pop(field_val)
     return result
 
+
 def query(pattern):
     if "_id" in pattern:
         pattern["_id"] = ObjectId(pattern["_id"])
     return collection.find(pattern)
+
 
 def getdocsforuserdata():
     my_query = []

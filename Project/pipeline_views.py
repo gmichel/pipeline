@@ -23,6 +23,8 @@ base_context = {
     "highlight_fields": settings.app_settings.get("highlight_fields", []),
     "highlight_words": settings.app_settings.get("highlight_words", []),
     "sitestyles": settings.app_settings.get("css", ""),
+    "num_rev_papers": settings.app_settings.get("num_rev_papers"),
+    "rev_papers_timeout": settings.app_settings.get("rev_papers_timeout")
 }
 
 try:
@@ -254,10 +256,11 @@ def review(request, status=None):
             if status == "triage"
             else ""
         )
+        nextbutton = request.GET.get("button")
         context = {
             "items": [
                 _prep_paper_for_review(paper)
-                for paper in _filter_papers(request, models.papers_by_status(status))
+                for paper in _filter_papers(request, models.papers_by_lock_status(status, nextbutton, request.user.username, base_context["num_rev_papers"]))
             ],
             "title": f"{base_context['toolname']}: review",
             "status": status,
